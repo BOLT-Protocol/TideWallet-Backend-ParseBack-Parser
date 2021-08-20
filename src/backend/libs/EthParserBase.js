@@ -15,6 +15,7 @@ class EthParserBase extends ParserBase {
     this.tokenTransactionModel = this.database.db.TokenTransaction;
     this.addressTokenTransactionModel = this.database.db.AddressTokenTransaction;
     this.options = {};
+    this.syncInterval = 15000;
   }
 
   async init() {
@@ -22,22 +23,38 @@ class EthParserBase extends ParserBase {
     this.isParsing = false;
     this.web3 = new Web3();
 
+    try {
+      this.doJob();
+    } catch (error) {
+      this.logger.log(`[${this.constructor.name}] ${error}`);
+    }
+
+    setInterval(async () => {
+      try {
+        this.doJob();
+      } catch (error) {
+        this.logger.log(`[${this.constructor.name}] ${error}`);
+      }
+    }, this.syncInterval);
+
     return this;
   }
 
-  async doJob(job) {
-    try {
-      this.block = job.currentBlock;
-      const unParsedTx = job;
-      const transaction = JSON.parse(unParsedTx.transaction);
-      const receipt = await this.receiptFromPeer(transaction.hash);
-      await this.parseTx(transaction, receipt, unParsedTx.timestamp);
-      job.success = true;
-    } catch (error) {
-      this.logger.error(`[${this.constructor.name}] doJob error: ${error}`);
-      job.success = false;
+  async doJob() {
+    if (this.isSyncing) {
+      this.logger.log(`[${this.constructor.name}] is sycning`);
+      return Promise.resolve();
     }
-    return job;
+    this.isSyncing = true;
+    while (this.isSyncing) {
+      try {
+        await this.oneCycle();
+      } catch (error) {
+        this.logger.error(`[${this.constructor.name}] doJob error: ${error}`);
+        this.isSyncing = false;
+      }
+    }
+    this.isSyncing = false;
   }
 
   async findOrCreateCurrency(contractAddress) {
@@ -456,21 +473,16 @@ class EthParserBase extends ParserBase {
       const bnGasPrice = new BigNumber(tx.gasPrice, 16);
       const bnGasUsed = new BigNumber(receipt.gasUsed, 16);
       const fee = bnGasPrice.multipliedBy(bnGasUsed).toFixed();
-      const currentBlock = this.block ? this.block : await this.blockNumberFromDB();
-      let txStatus = null;
+      let txStatus = true;
       if (receipt.status !== '0x1') {
         txStatus = false;
-      } else if (currentBlock - parseInt(tx.blockNumber, 16) >= 6) {
-        txStatus = true;
       }
-      let insertTx = await this.transactionModel.findOne({
+      const insertTx = await this.transactionModel.findOrCreate({
         where: {
           currency_id: this.currencyInfo.currency_id,
           txid: tx.hash,
         },
-      });
-      if (!insertTx) {
-        insertTx = await this.transactionModel.create({
+        defaults: {
           currency_id: this.currencyInfo.currency_id,
           txid: tx.hash,
           timestamp,
@@ -484,60 +496,25 @@ class EthParserBase extends ParserBase {
           gas_price: bnGasPrice.toFixed(),
           gas_used: bnGasUsed.toFixed(),
           result: txStatus,
-        });
-      } else {
-        const updateResult = await this.transactionModel.update({
-          timestamp,
-          fee,
-          block: parseInt(tx.blockNumber, 16),
-          gas_used: bnGasUsed.toFixed(),
-          result: txStatus,
-        }, {
-          where: {
-            currency_id: this.currencyInfo.currency_id,
-            txid: tx.hash,
-          },
-          returning: true,
-        });
+        },
+      });
 
-        [, [insertTx]] = updateResult;
-      }
-
-      const insertReceipt = await this.receiptModel.findOne({
+      await this.receiptModel.findOrCreate({
         where: {
           currency_id: this.currencyInfo.currency_id,
           transaction_id: insertTx.transaction_id,
         },
+        defaults: {
+          transaction_id: insertTx.transaction_id,
+          currency_id: this.currencyInfo.currency_id,
+          contract_address: receipt.contractAddress,
+          cumulative_gas_used: parseInt(receipt.cumulativeGasUsed, 16),
+          gas_used: bnGasUsed.toFixed(),
+          logs: JSON.stringify(receipt.logs),
+          logsBloom: receipt.logsBloom,
+          status: parseInt(receipt.status, 16),
+        },
       });
-
-      if (!insertReceipt) {
-        await this.receiptModel.create({
-          transaction_id: insertTx.transaction_id,
-          currency_id: this.currencyInfo.currency_id,
-          contract_address: receipt.contractAddress,
-          cumulative_gas_used: parseInt(receipt.cumulativeGasUsed, 16),
-          gas_used: bnGasUsed.toFixed(),
-          logs: JSON.stringify(receipt.logs),
-          logsBloom: receipt.logsBloom,
-          status: parseInt(receipt.status, 16),
-        });
-      } else {
-        await this.receiptModel.update({
-          transaction_id: insertTx.transaction_id,
-          currency_id: this.currencyInfo.currency_id,
-          contract_address: receipt.contractAddress,
-          cumulative_gas_used: parseInt(receipt.cumulativeGasUsed, 16),
-          gas_used: bnGasUsed.toFixed(),
-          logs: JSON.stringify(receipt.logs),
-          logsBloom: receipt.logsBloom,
-          status: parseInt(receipt.status, 16),
-        }, {
-          where: {
-            receipt_id: insertReceipt.receipt_id,
-          },
-          returning: true,
-        });
-      }
 
       const { from, to } = tx;
       // 3. parse receipt to check is token transfer
@@ -655,8 +632,158 @@ class EthParserBase extends ParserBase {
     }
   }
 
+  async oneCycle() {
+    this.logger.debug(`[${this.constructor.name}] oneCycle`);
+    try {
+      const block = await this.getBlock();
+      if (block < 0) {
+        this.logger.log('All processing or all done.');
+        this.block = -1;
+        this.isSyncing = false;
+        return Promise.resolve();
+      }
+      this.block = block;
+      // get block data from peer
+      const syncResult = await this.blockDataFromPeer(block);
+      if (!syncResult) {
+        // block hash or data not found
+        // maybe network error or block doesn't exist
+        // end this recursive
+        throw new Error(`blockDataFromPeer ${block} not found`);
+      }
+
+      // 2. save block data into db
+      // must success
+      await this.insertBlock(syncResult);
+
+      // sync tx and receipt
+      const txs = syncResult.transactions;
+      const timestamp = parseInt(syncResult.timestamp, 16);
+
+      for (const tx of txs) {
+        const receipt = await this.receiptFromPeer(tx.hash);
+        await this.parseTx(tx, receipt, timestamp);
+      }
+
+      // update parseBack done
+      console.log('update parseBack done');
+      await this.parseBackModel.update({
+        done: true,
+      }, {
+        where: {
+          block: this.block,
+        },
+      });
+
+      this.block = -1;
+      return Promise.resolve();
+    } catch (error) {
+      this.logger.error(`[${this.constructor.name}] oneCycle error: ${error}`);
+      if (this.block >= 0) {
+        try {
+          await this.parseBackModel.update({
+            start: 0,
+            retry: this.Sequelize.literal('retry + 1'),
+          }, {
+            where: {
+              block: this.block,
+            },
+          });
+        } catch (resetError) {
+          this.logger.error('reset parse', resetError);
+        }
+      }
+      this.block = -1;
+      return Promise.resolve(error);
+    }
+  }
+
+  async blockDataFromPeer(block) {
+    this.logger.debug(`[${this.constructor.name}] blockDataFromPeer(${block})`);
+    const type = 'getBlock';
+    const options = dvalue.clone(this.options);
+    options.data = this.constructor.cmd({ type, block });
+    const checkId = options.data.id;
+    let data;
+    try {
+      data = await Utils.ETHRPC(options);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    if (data instanceof Object) {
+      if (data.id !== checkId) {
+        this.logger.error(`[${this.constructor.name}] \x1b[1m\x1b[90mblock data not found\x1b[0m\x1b[21m`);
+        return Promise.reject();
+      }
+      return Promise.resolve(data.result);
+    }
+    this.logger.error(`[${this.constructor.name}] \x1b[1m\x1b[90mblock data not found\x1b[0m\x1b[21m`);
+    return Promise.reject();
+  }
+
+  async insertBlock(blockData) {
+    this.logger.debug(`[${this.constructor.name}] insertBlock(${blockData.hash})`);
+
+    try {
+      const txs = blockData.transactions;
+      const txids = [];
+      for (const tx of txs) {
+        txids.push(tx.hash);
+      }
+
+      let insertResult = await this.blockScannedModel.findOne({
+        where: { blockchain_id: this.bcid, block: parseInt(blockData.number, 16) },
+      });
+
+      if (!insertResult) {
+        insertResult = await this.blockScannedModel.create({
+          blockchain_id: this.bcid,
+          block: parseInt(blockData.number, 16),
+          block_hash: blockData.hash,
+          timestamp: parseInt(blockData.timestamp, 16),
+          result: JSON.stringify(txids),
+          transaction_count: txids.length,
+          miner: blockData.miner,
+          difficulty: new BigNumber(blockData.difficulty, 16).toFixed(),
+          transactions_root: blockData.transactionsRoot,
+          size: parseInt(blockData.size, 16),
+          gas_used: parseInt(blockData.gasUsed, 16),
+          extra_data: blockData.extraData,
+          uncles: JSON.stringify(blockData.uncles),
+        });
+      } else {
+        const updateResult = await this.blockScannedModel.update({
+          blockchain_id: this.bcid,
+          block: parseInt(blockData.number, 16),
+          block_hash: blockData.hash,
+          timestamp: parseInt(blockData.timestamp, 16),
+          result: JSON.stringify(txids),
+          transaction_count: txids.length,
+          miner: blockData.miner,
+          difficulty: new BigNumber(blockData.difficulty, 16).toFixed(),
+          transactions_root: blockData.transactionsRoot,
+          size: parseInt(blockData.size, 16),
+          gas_used: parseInt(blockData.gasUsed, 16),
+          extra_data: blockData.extraData,
+          uncles: JSON.stringify(blockData.uncles),
+        }, {
+          where: {
+            blockScanned_id: insertResult.blockScanned_id,
+          },
+          returning: true,
+        });
+        [, [insertResult]] = updateResult;
+      }
+      return insertResult;
+    } catch (error) {
+      const e = new Error(`[${this.constructor.name}] insertBlock(${blockData.hash}) error: ${error}`);
+      this.logger.error(e);
+      return Promise.reject(e);
+    }
+  }
+
   static cmd({
-    type, address, command, txid,
+    type, address, command, txid, block,
   }) {
     let result;
     switch (type) {
@@ -676,6 +803,14 @@ class EthParserBase extends ParserBase {
           jsonrpc: '2.0',
           method: 'eth_getTransactionReceipt',
           params: [txid],
+          id: dvalue.randomID(),
+        };
+        break;
+      case 'getBlock':
+        result = {
+          jsonrpc: '2.0',
+          method: 'eth_getBlockByNumber',
+          params: [`0x${block.toString(16)}`, true],
           id: dvalue.randomID(),
         };
         break;

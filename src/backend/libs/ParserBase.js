@@ -1,5 +1,3 @@
-const amqp = require('amqplib');
-
 class ParserBase {
   constructor(blockchainId, config, database, logger) {
     this.bcid = blockchainId;
@@ -12,38 +10,19 @@ class ParserBase {
     this.currencyModel = this.database.db.Currency;
     this.sequelize = this.database.db.sequelize;
     this.Sequelize = this.database.db.Sequelize;
-    this.unparsedTxModel = this.database.db.UnparsedTransaction;
 
     this.transactionModel = this.database.db.Transaction;
     this.accountModel = this.database.db.Account;
     this.accountAddressModel = this.database.db.AccountAddress;
     this.accountCurrencyModel = this.database.db.AccountCurrency;
     this.addressTransactionModel = this.database.db.AddressTransaction;
-
-    this.amqpHost = this.config.rabbitmq.host;
+    this.parseBackModel = this.database.db.ParseBack;
   }
 
   async init() {
     this.currencyInfo = await this.getCurrencyInfo();
     this.maxRetry = 3;
-    try {
-      this.queueConnect = await amqp.connect(this.amqpHost);
-      this.queueChannel = await this.queueConnect.createChannel();
-    } catch (error) {
-      this.logger.error(`[${this.constructor.name}] init amqp error: ${error}`);
-      process.exit(1);
-    }
-    this.queueConnect.on('error', (err) => { throw err; });
-    this.queueConnect.on('close', () => { throw new Error(`[${this.constructor.name}] amqp channel close`); });
-    this.queueChannel.on('error', (err) => { throw err; });
-    this.queueChannel.on('close', () => { throw new Error(`[${this.constructor.name}] amqp channel close`); });
-    this.queueChannel.prefetch(1);
-    this.jobQueue = `${this.bcid}ParseJob`;
-    this.jobCallback = `${this.bcid}ParseJobCallback`;
-    await this.queueChannel.assertQueue(this.jobCallback, { durable: true });
-    await this.queueChannel.assertQueue(this.jobQueue, { durable: true });
-
-    this.getJob();
+    this.isSyncing = false;
 
     return this;
   }
@@ -116,26 +95,46 @@ class ParserBase {
     }
   }
 
-  async getJob() {
-    this.logger.debug(`[${this.constructor.name}] getJob`);
-    let tmpMsg;
+  async oneCycle() {
+    // need override
+    return Promise.resolve();
+  }
+
+  async getBlock() {
+    this.logger.debug(`[${this.constructor.name}] getBlock`);
     try {
-      await this.queueChannel.consume(this.jobQueue, async (msg) => {
-        tmpMsg = msg;
-        const job = JSON.parse(msg.content.toString());
-        const jobDone = await this.doJob(job);
-
-        // IMPORTENT!!! remove from queue
-        await this.queueChannel.ack(msg);
-
-        await this.setJobCallback(jobDone);
-
-        return job;
-      }, { noAck: false });
+      let findBlock;
+      await this.sequelize.transaction(async (transaction) => {
+        const now = Math.floor(Date.now() / 1000);
+        const oneDayAgo = now - 86400;
+        console.log(oneDayAgo);
+        findBlock = await this.parseBackModel.findOne({
+          where: {
+            done: false,
+            start: {
+              [this.Sequelize.Op.lt]: oneDayAgo,
+            },
+          },
+          transaction,
+        });
+        if (!findBlock) {
+          return;
+        }
+        await this.parseBackModel.update({
+          start: now,
+        }, {
+          where: {
+            block: findBlock.block,
+          },
+          transaction,
+        });
+      });
+      if (!findBlock) {
+        return -1;
+      }
+      return parseInt(findBlock.block, 10);
     } catch (error) {
-      this.logger.error(`[${this.constructor.name}] getJob error: ${error}`);
-      // back to queue
-      this.queueChannel.nack(tmpMsg);
+      this.logger.error(`[${this.constructor.name}] getBlock error: ${error}`);
       return Promise.reject(error);
     }
   }
@@ -205,6 +204,16 @@ class ParserBase {
   }
 
   async parsePendingTransaction() {
+    // need override
+    return Promise.resolve();
+  }
+
+  async blockDataFromPeer() {
+    // need override
+    return Promise.resolve();
+  }
+
+  async getBlockTransaction() {
     // need override
     return Promise.resolve();
   }

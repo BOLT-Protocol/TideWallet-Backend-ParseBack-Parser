@@ -6,16 +6,15 @@
     "mermer": "bin/main.js"
   },
   "bugs": {
-    "url": "https://github.com/BOLT-Protocol/TideWallet-Backend-Parser/issues"
+    "url": "https://github.com/BOLT-Protocol/TideWallet-Backend-ParseBack-Parser/issues"
   },
   "bundleDependencies": false,
   "dependencies": {
-    "amqplib": "^0.7.1",
+    "bchaddrjs": "^0.5.2",
     "bignumber.js": "^9.0.1",
     "bitcoinjs-lib": "^5.2.0",
     "bs58": "^4.0.1",
     "bs58check": "^2.1.2",
-    "bchaddrjs": "^0.5.2",
     "command-line-args": "^5.0.2",
     "dvalue": "^1.0.20",
     "ecrequest": "^1.1.5",
@@ -56,10 +55,10 @@
   ],
   "license": "GPL-3.0",
   "main": "bin/main.js",
-  "name": "TideWallet-Backend-Parser",
+  "name": "TideWallet-Backend-ParseBack-Parser",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/BOLT-Protocol/TideWallet-Backend-Parser.git"
+    "url": "git+https://github.com/BOLT-Protocol/TideWallet-Backend-ParseBack-Parser.git"
   },
   "scripts": {
     "dev": "webpack-dev-server --mode development --open 'google chrome'",

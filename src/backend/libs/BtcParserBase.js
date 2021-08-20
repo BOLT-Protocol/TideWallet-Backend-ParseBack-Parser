@@ -498,8 +498,38 @@ class BtcParserBase extends ParserBase {
     });
   }
 
+  async blockDataFromPeer(blockHash) {
+    this.logger.debug(`[${this.constructor.name}] blockDataFromPeer(${blockHash})`);
+    const type = 'getblock';
+    const options = dvalue.clone(this.options);
+    options.data = this.constructor.cmd({ type, block_hash: blockHash });
+    const checkId = options.data.id;
+    const data = await Utils.BTCRPC(options);
+    if (data instanceof Object) {
+      if (data.id !== checkId) return Promise.reject();
+      return Promise.resolve(data.result);
+    }
+    this.logger.error('\x1b[1m\x1b[90mbtc block data not found\x1b[0m\x1b[21m');
+    return Promise.reject();
+  }
+
+  async blockHashFromPeer(block) {
+    this.logger.debug(`[${this.constructor.name}] blockhashFromPeer(${block})`);
+    const type = 'getblockhash';
+    const options = dvalue.clone(this.options);
+    options.data = this.constructor.cmd({ type, block });
+    const checkId = options.data.id;
+    const data = await Utils.BTCRPC(options);
+    if (data instanceof Object) {
+      if (data.id !== checkId) return Promise.reject();
+      return Promise.resolve(data.result);
+    }
+    this.logger.error('\x1b[1m\x1b[90mbtc block hash not found\x1b[0m\x1b[21m');
+    return Promise.reject();
+  }
+
   static cmd({
-    type, txid, block_hash,
+    type, txid, block_hash, block,
   }) {
     let result;
     switch (type) {
@@ -516,6 +546,22 @@ class BtcParserBase extends ParserBase {
           jsonrpc: '1.0',
           method: 'getblockstats',
           params: [block_hash, ['height']],
+          id: dvalue.randomID(),
+        };
+        break;
+      case 'getblockhash':
+        result = {
+          jsonrpc: '1.0',
+          method: 'getblockhash',
+          params: [block],
+          id: dvalue.randomID(),
+        };
+        break;
+      case 'getblock':
+        result = {
+          jsonrpc: '1.0',
+          method: 'getblock',
+          params: [block_hash, 2],
           id: dvalue.randomID(),
         };
         break;
