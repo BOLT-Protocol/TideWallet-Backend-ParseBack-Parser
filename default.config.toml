@@ -1,0 +1,106 @@
+# MerMer Default Config
+
+title = "TideWallet-Backend-Parser"
+
+[base]
+domain = "https://service.tidewallet.io"
+folder = "TideWallet-Backend-Parser"
+static = "./build/frontend/"
+logLevel = 'info'
+
+[blockchain]
+# type = 'bitcoin_mainnet'
+# type = 'bitcoin_testnet'
+# type = 'ethereum_mainnet'
+# type = 'ethereum_ropsten'
+# type = 'cafeca'
+type = 'titan'
+
+[blockchain.ethereum_mainnet]
+blockchain_id = "8000003C"
+protocol = "http:"
+hostname = "127.0.0.1"
+port = 8545
+path = "/"
+
+[blockchain.ethereum_ropsten]
+blockchain_id = "F000003C"
+protocol = "http:"
+hostname = "127.0.0.1"
+port = 8545
+path = "/"
+
+[blockchain.cafeca]
+blockchain_id = "80000CFC"
+protocol = "http:"
+hostname = "127.0.0.1"
+port = 8545
+path = "/"
+
+[blockchain.bitcoin_mainnet]
+blockchain_id = "80000000"
+protocol = "http:"
+hostname = "127.0.0.1"
+port = 18332
+path = "/"
+user = ''
+password = ''
+
+[blockchain.bitcoin_testnet]
+blockchain_id = "F0000000"
+protocol = "http:"
+hostname = "127.0.0.1"
+port = 18332
+path = "/"
+user = ''
+password = ''
+
+[blockchain.bitcoin_cash_mainnet]
+blockchain_id = "80000091"
+protocol = "https:"
+hostname = "bitcoincash.tidewallet.io"
+port = 443
+path = "/"
+user = ""
+password = ""
+
+[blockchain.bitcoin_cash_testnet]
+blockchain_id = "F0000091"
+protocol = "https:"
+hostname = "bitcoincash-testnet.tidewallet.io"
+port = 443
+path = "/"
+user = ""
+password = ""
+
+[blockchain.titan]
+blockchain_id = "80001F51"
+protocol = "http:"
+hostname = "127.0.0.1"
+port = 8545
+path = "/"
+
+
+[database]
+protocol = "postgres"
+host = "postgres"
+port = ""
+user = ""
+password = ""
+dbName = ""
+logging = false
+autoReconnect = true
+ormEnable = true
+  [database.dialectOptions]
+  connectTimeout = 3000
+
+  [database.pool]
+  max = 2  #not less than 2
+
+[rabbitmq]
+host = "amqp://localhost"
+
+[api]
+pathname = [
+  "get | /,/version | Static.Utils.readPackageInfo"
+]
