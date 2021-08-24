@@ -25,6 +25,20 @@ class ParserBase {
     this.isSyncing = false;
     await this.updateParseBackTable();
 
+    try {
+      this.doJob();
+    } catch (error) {
+      this.logger.log(`[${this.constructor.name}] ${error}`);
+    }
+
+    setInterval(async () => {
+      try {
+        this.doJob();
+      } catch (error) {
+        this.logger.log(`[${this.constructor.name}] ${error}`);
+      }
+    }, this.syncInterval);
+
     return this;
   }
 

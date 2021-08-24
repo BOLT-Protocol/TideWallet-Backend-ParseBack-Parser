@@ -20,23 +20,7 @@ class EthParserBase extends ParserBase {
 
   async init() {
     await super.init();
-    this.isParsing = false;
     this.web3 = new Web3();
-
-    try {
-      this.doJob();
-    } catch (error) {
-      this.logger.log(`[${this.constructor.name}] ${error}`);
-    }
-
-    setInterval(async () => {
-      try {
-        this.doJob();
-      } catch (error) {
-        this.logger.log(`[${this.constructor.name}] ${error}`);
-      }
-    }, this.syncInterval);
-
     return this;
   }
 
