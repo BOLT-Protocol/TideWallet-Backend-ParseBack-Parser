@@ -21,25 +21,7 @@ class BtcParserBase extends ParserBase {
 
   async init() {
     await super.init();
-    this.isParsing = false;
     return this;
-  }
-
-  async doJob(job) {
-    try {
-      this.block = job.currentBlock;
-      const unParsedTx = job;
-      const transaction = JSON.parse(unParsedTx.transaction);
-      // await this.parseTx(transaction, unParsedTx.timestamp);
-      await BtcParserBase.parseTx.call(this, transaction, this.currencyInfo, unParsedTx.timestamp);
-
-      job.success = true;
-      job.updateBalanceAccounts = this.updateBalanceAccounts;
-    } catch (error) {
-      this.logger.error(`[${this.constructor.name}] doJob error: ${error}`);
-      job.success = false;
-    }
-    return job;
   }
 
   async blockHeightByBlockHashFromPeer(block) {
@@ -171,6 +153,72 @@ class BtcParserBase extends ParserBase {
       destination_addresses: JSON.stringify(destination_addresses),
       note,
     };
+  }
+
+  async oneCycle() {
+    this.logger.debug(`[${this.constructor.name}] oneCycle`);
+    try {
+      const block = await this.getBlock();
+      if (block < 0) {
+        this.logger.log('All processing or all done.');
+        this.block = -1;
+        this.isSyncing = false;
+        return Promise.resolve();
+      }
+      this.block = block;
+      // get block data from peer
+      const blockHash = await this.blockHashFromPeer(block);
+
+      const syncResult = await this.blockDataFromPeer(blockHash);
+      if (!syncResult) {
+        // block hash or data not found
+        // maybe network error or block doesn't exist
+        // end this recursive
+        throw new Error(`blockDataFromPeer ${block} not found`);
+      }
+
+      // 2. save block data into db
+      // must success
+      await this.insertBlock(syncResult);
+
+      // sync tx
+      const txs = syncResult.tx;
+      const timestamp = syncResult.time;
+
+      for (const tx of txs) {
+        await BtcParserBase.parseTx.call(this, tx, this.currencyInfo, timestamp);
+      }
+
+      // update parseBack done
+      await this.parseBackModel.update({
+        done: true,
+      }, {
+        where: {
+          block: this.block,
+        },
+      });
+
+      this.block = -1;
+      return Promise.resolve();
+    } catch (error) {
+      this.logger.error(`[${this.constructor.name}] oneCycle error: ${error}`);
+      if (this.block >= 0) {
+        try {
+          await this.parseBackModel.update({
+            start: 0,
+            retry: this.Sequelize.literal('retry + 1'),
+          }, {
+            where: {
+              block: this.block,
+            },
+          });
+        } catch (resetError) {
+          this.logger.error('reset parse', resetError);
+        }
+      }
+      this.block = -1;
+      return Promise.resolve(error);
+    }
   }
 
   static async parseTx(tx, currencyInfo, timestamp) {
@@ -528,6 +576,91 @@ class BtcParserBase extends ParserBase {
     return Promise.reject();
   }
 
+  async insertBlock(blockData) {
+    this.logger.debug(`[${this.constructor.name}] insertBlock(${blockData.hash})`);
+
+    try {
+      const txs = blockData.tx;
+      const txids = [];
+      for (const tx of txs) {
+        txids.push(tx.txid);
+      }
+
+      const blockStats = await this.blockStatsFromPeer(blockData.height);
+
+      let insertResult = await this.blockScannedModel.findOne({
+        where: { blockchain_id: this.bcid, block: blockData.height },
+      });
+      let miner = '';
+      const coinbaseTxVout = txs[0].vout;
+      for (const vout of coinbaseTxVout) {
+        if (vout.scriptPubKey.addresses) {
+          [miner] = vout.scriptPubKey.addresses;
+          break;
+        }
+      }
+      if (!insertResult) {
+        insertResult = await this.blockScannedModel.create({
+          blockchain_id: this.bcid,
+          block: blockData.height,
+          block_hash: blockData.hash,
+          timestamp: blockData.time,
+          result: JSON.stringify(txids),
+          transaction_count: txids.length,
+          miner,
+          difficulty: new BigNumber(blockData.difficulty).toFixed(),
+          transactions_root: blockData.merkleroot,
+          size: blockData.size,
+          transaction_volume: new BigNumber(blockStats.total_out).toFixed(),
+          block_reward: Utils.multipliedByDecimal(txs[0].vout[0].value, this.decimal), // ++ not the same as blockchain.com
+          block_fee: new BigNumber(blockStats.totalfee).toFixed(),
+        });
+      } else {
+        const updateResult = await this.blockScannedModel.update({
+          blockchain_id: this.bcid,
+          block: blockData.height,
+          block_hash: blockData.hash,
+          timestamp: blockData.time,
+          result: JSON.stringify(txids),
+          transaction_count: txids.length,
+          miner,
+          difficulty: new BigNumber(blockData.difficulty).toFixed(),
+          transactions_root: blockData.merkleroot,
+          size: blockData.size,
+          transaction_volume: new BigNumber(blockStats.total_out).toFixed(),
+          block_reward: Utils.multipliedByDecimal(txs[0].vout[0].value, this.decimal), // ++ not the same as blockchain.com
+          block_fee: new BigNumber(blockStats.totalfee).toFixed(),
+        }, {
+          where: {
+            blockScanned_id: insertResult.blockScanned_id,
+          },
+          returning: true,
+        });
+        [, [insertResult]] = updateResult;
+      }
+      return insertResult;
+    } catch (error) {
+      const e = new Error(`[${this.constructor.name}] insertBlock(${blockData.hash}) error: ${error}`);
+      this.logger.error(e);
+      return Promise.reject(e);
+    }
+  }
+
+  async blockStatsFromPeer(block) {
+    this.logger.debug(`[${this.constructor.name}] blockStatsFromPeer(${block})`);
+    const type = 'getblockstats';
+    const options = dvalue.clone(this.options);
+    options.data = this.constructor.cmd({ type, block });
+    const checkId = options.data.id;
+    const data = await Utils.BTCRPC(options);
+    if (data instanceof Object) {
+      if (data.id !== checkId) return Promise.reject();
+      return Promise.resolve(data.result);
+    }
+    this.logger.error(`[${this.constructor.name}] blockStatsFromPeer(${block}) not found`);
+    return Promise.reject();
+  }
+
   static cmd({
     type, txid, block_hash, block,
   }) {
@@ -562,6 +695,14 @@ class BtcParserBase extends ParserBase {
           jsonrpc: '1.0',
           method: 'getblock',
           params: [block_hash, 2],
+          id: dvalue.randomID(),
+        };
+        break;
+      case 'getblockstats':
+        result = {
+          jsonrpc: '1.0',
+          method: 'getblockstats',
+          params: [block],
           id: dvalue.randomID(),
         };
         break;
