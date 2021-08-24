@@ -49,11 +49,21 @@ class ParserBase {
     }
   }
 
-  // eslint-disable-next-line no-unused-vars
-  async doJob(job) {
-    // need override
-    await this.parseTx();
-    return Promise.resolve();
+  async doJob() {
+    if (this.isSyncing) {
+      this.logger.log(`[${this.constructor.name}] is sycning`);
+      return Promise.resolve();
+    }
+    this.isSyncing = true;
+    while (this.isSyncing) {
+      try {
+        await this.oneCycle();
+      } catch (error) {
+        this.logger.error(`[${this.constructor.name}] doJob error: ${error}`);
+        this.isSyncing = false;
+      }
+    }
+    this.isSyncing = false;
   }
 
   async getCurrencyInfo() {
@@ -71,8 +81,68 @@ class ParserBase {
   }
 
   async oneCycle() {
-    // need override
-    return Promise.resolve();
+    this.logger.debug(`[${this.constructor.name}] oneCycle`);
+    try {
+      const block = await this.getBlock();
+      if (block < 0) {
+        this.logger.log('All processing or all done.');
+        this.block = -1;
+        this.isSyncing = false;
+        return Promise.resolve();
+      }
+      this.block = block;
+      // get block data from peer
+      const syncResult = await this.blockDataFromPeer(block);
+      if (!syncResult) {
+        // block hash or data not found
+        // maybe network error or block doesn't exist
+        // end this recursive
+        throw new Error(`blockDataFromPeer ${block} not found`);
+      }
+
+      // 2. save block data into db
+      // must success
+      await this.insertBlock(syncResult);
+
+      // sync tx and receipt
+      const txs = syncResult.transactions;
+      const timestamp = parseInt(syncResult.timestamp, 16);
+
+      for (const tx of txs) {
+        const receipt = await this.receiptFromPeer(tx.hash);
+        await this.parseTx(tx, receipt, timestamp);
+      }
+
+      // update parseBack done
+      await this.parseBackModel.update({
+        done: true,
+      }, {
+        where: {
+          block: this.block,
+        },
+      });
+
+      this.block = -1;
+      return Promise.resolve();
+    } catch (error) {
+      this.logger.error(`[${this.constructor.name}] oneCycle error: ${error}`);
+      if (this.block >= 0) {
+        try {
+          await this.parseBackModel.update({
+            start: 0,
+            retry: this.Sequelize.literal('retry + 1'),
+          }, {
+            where: {
+              block: this.block,
+            },
+          });
+        } catch (resetError) {
+          this.logger.error('reset parse', resetError);
+        }
+      }
+      this.block = -1;
+      return Promise.resolve(error);
+    }
   }
 
   async getBlock() {
