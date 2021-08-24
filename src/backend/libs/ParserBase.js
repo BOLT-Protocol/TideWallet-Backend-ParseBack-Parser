@@ -23,34 +23,9 @@ class ParserBase {
     this.currencyInfo = await this.getCurrencyInfo();
     this.maxRetry = 3;
     this.isSyncing = false;
+    await this.updateParseBackTable();
 
     return this;
-  }
-
-  async blockNumberFromDB() {
-    this.logger.debug(`[${this.constructor.name}] blockNumberFromDB`);
-    try {
-      const result = await this.blockchainModel.findOne({
-        where: { blockchain_id: this.bcid },
-      });
-      return result.block;
-    } catch (error) {
-      this.logger.error(`[${this.constructor.name}] blockNumberFromDB error ${error}`);
-      return Promise.reject(error);
-    }
-  }
-
-  async blockDataFromDB(block_hash) {
-    this.logger.debug(`[${this.constructor.name}] blockNumberFromDB`);
-    try {
-      const result = await this.blockScannedModel.findOne({
-        where: { blockchain_id: this.bcid, block_hash },
-      });
-      return result;
-    } catch (error) {
-      this.logger.error(`[${this.constructor.name}] blockNumberFromDB error ${error}`);
-      return 0;
-    }
   }
 
   async checkRegistAddress(address) {
@@ -187,18 +162,6 @@ class ParserBase {
     }
   }
 
-  async setJobCallback(res) {
-    this.logger.debug(`[${this.constructor.name}] setJobCallback(${res})`);
-    try {
-      const strRes = JSON.stringify(res);
-      const bufRes = Buffer.from(strRes);
-      await this.queueChannel.sendToQueue(this.jobCallback, bufRes, { persistent: true });
-    } catch (error) {
-      this.logger.error(`[${this.constructor.name}] setJobCallback() error:`, error);
-      return Promise.reject(error);
-    }
-  }
-
   async parseTx() {
     // need override
     const res = {};
@@ -219,6 +182,38 @@ class ParserBase {
   async getBlockTransaction() {
     // need override
     return Promise.resolve();
+  }
+
+  async updateParseBackTable() {
+    console.log(`[${this.constructor.name}] updateParseBackTable()`);
+    const blockData = await this.blockchainModel.findOne({
+      where: { blockchain_id: this.bcid },
+    });
+    const parseBackData = await this.parseBackModel.findOne({
+      order: [['block', 'DESC']],
+    });
+    const bBlock = parseInt(blockData.block, 10);
+    const pbBlock = parseInt(parseBackData.block, 10);
+    if (bBlock > pbBlock) {
+      const limit = 10000;
+      let step = pbBlock + 1;
+      while (step < bBlock) {
+        console.log('start block', step);
+        const dataArr = [];
+        let i = 0;
+        for (; i < limit && (i + step) <= bBlock; i++) {
+          dataArr.push({
+            blockchain_id: this.bcid,
+            block: step + i,
+            done: false,
+            start: 0,
+            retry: 0,
+          });
+        }
+        const result = await this.parseBackModel.bulkCreate(dataArr);
+        step += i;
+      }
+    }
   }
 }
 
