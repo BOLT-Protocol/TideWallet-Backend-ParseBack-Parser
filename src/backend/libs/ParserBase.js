@@ -114,6 +114,9 @@ class ParserBase {
             start: {
               [this.Sequelize.Op.lt]: oneDayAgo,
             },
+            retry: {
+              [this.Sequelize.Op.lt]: this.maxRetry,
+            },
           },
           transaction,
         });
