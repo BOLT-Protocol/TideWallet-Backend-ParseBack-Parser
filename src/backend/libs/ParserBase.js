@@ -72,7 +72,10 @@ class ParserBase {
     this.isSyncing = true;
     while (this.isSyncing) {
       try {
+        const t1 = Math.floor(Date.now() / 1000);
         await this.oneCycle();
+        const t2 = Math.floor(Date.now() / 1000);
+        console.log('OneCycle use', t2 - t1, 'sec');
       } catch (error) {
         this.logger.error(`[${this.constructor.name}] doJob error: ${error}`);
         this.isSyncing = false;
@@ -107,7 +110,6 @@ class ParserBase {
       await this.sequelize.transaction(async (transaction) => {
         const now = Math.floor(Date.now() / 1000);
         const oneDayAgo = now - 86400;
-        console.log(oneDayAgo);
         findBlock = await this.parseBackModel.findOne({
           where: {
             done: false,
