@@ -1,16 +1,18 @@
 # MerMer Default Config
 
-title = "TideWallet-Backend-Parser"
+title = "TideWallet-Backend-ParseBack-Parser"
 
 [base]
 domain = "https://service.tidewallet.io"
-folder = "TideWallet-Backend-Parser"
+folder = "TideWallet-Backend-ParseBack-Parser"
 static = "./build/frontend/"
-logLevel = 'info'
+logLevel = 'debug'
 
 [blockchain]
 # type = 'bitcoin_mainnet'
 # type = 'bitcoin_testnet'
+# type = 'bitcoin_cash_mainnet'
+# type = 'bitcoin_cash_testnnet'
 # type = 'ethereum_mainnet'
 # type = 'ethereum_ropsten'
 # type = 'cafeca'
@@ -96,9 +98,6 @@ ormEnable = true
 
   [database.pool]
   max = 2  #not less than 2
-
-[rabbitmq]
-host = "amqp://localhost"
 
 [api]
 pathname = [

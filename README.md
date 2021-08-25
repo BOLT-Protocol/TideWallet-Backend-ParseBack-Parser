@@ -1,16 +1,9 @@
-# TideWallet-Backend-Parser
+# TideWallet-Backend-ParseBack-Parser
 Blockchain Parser for TideWallet
-
-## Run Crawler
-```
-cd /path/to/TideWallet-Backend
-npm install
-pm2 start . -n TideWallet-Crawler
-```
 
 ## Run Parser
 ```
-cd /path/to/TideWallet-Backend-Parser
+cd /path/to/TideWallet-Backend-ParseBack-Parser
 npm install
-pm2 start . -i 5 -n TideWallet-Parser
+pm2 start . -i 5 -n TideWallet-ParseBack-Parser
 ```
