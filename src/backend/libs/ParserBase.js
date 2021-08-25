@@ -175,7 +175,7 @@ class ParserBase {
           address,
         }, {
           where: {
-            addressTokenTransaction_id: result.addressTransaction_id,
+            addressTransaction_id: result.addressTransaction_id,
           },
           returning: true,
         });

@@ -508,7 +508,7 @@ class EthParserBase extends ParserBase {
       if (receipt.status !== '0x1') {
         txStatus = false;
       }
-      const insertTx = await this.transactionModel.findOrCreate({
+      const [insertTx] = await this.transactionModel.findOrCreate({
         where: {
           currency_id: this.currencyInfo.currency_id,
           txid: tx.hash,
