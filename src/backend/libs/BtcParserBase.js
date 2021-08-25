@@ -24,27 +24,6 @@ class BtcParserBase extends ParserBase {
     return this;
   }
 
-  async blockHeightByBlockHashFromPeer(block) {
-    this.logger.debug(`[${this.constructor.name}] blockHeightByBlockHashFromPeer(${block})`);
-    const type = 'getBlockHeight';
-    const options = dvalue.clone(this.options);
-    options.data = this.constructor.cmd({ type, block });
-    const checkId = options.data.id;
-    const data = await Utils.BTCRPC(options);
-    if (data instanceof Object) {
-      if (data.id !== checkId) {
-        this.logger.error(`[${this.constructor.name}] blockHeightByBlockHashFromPeer not found`);
-        return Promise.reject();
-      }
-      if (data.result) {
-        const height = data.result.height || '0';
-        return Promise.resolve(height);
-      }
-    }
-    this.logger.error(`[${this.constructor.name}] blockHeightByBlockHashFromPeer not found`);
-    return Promise.reject(data.error);
-  }
-
   static async getTransactionByTxidFromPeer(txid) {
     this.logger.debug(`[${this.constructor.name}] getTransactionByTxidFromPeer(${txid})`);
 
@@ -671,14 +650,6 @@ class BtcParserBase extends ParserBase {
           jsonrpc: '1.0',
           method: 'getrawtransaction',
           params: [txid, true],
-          id: dvalue.randomID(),
-        };
-        break;
-      case 'getBlockHeight':
-        result = {
-          jsonrpc: '1.0',
-          method: 'getblockstats',
-          params: [block_hash, ['height']],
           id: dvalue.randomID(),
         };
         break;
