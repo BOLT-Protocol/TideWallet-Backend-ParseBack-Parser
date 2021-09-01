@@ -109,12 +109,12 @@ class ParserBase {
       let findBlock;
       await this.sequelize.transaction(async (transaction) => {
         const now = Math.floor(Date.now() / 1000);
-        const oneDayAgo = now - 86400;
+        const timeThrough = now - 14400; // 4hr
         findBlock = await this.parseBackModel.findOne({
           where: {
             done: false,
             start: {
-              [this.Sequelize.Op.lt]: oneDayAgo,
+              [this.Sequelize.Op.lt]: timeThrough,
             },
             retry: {
               [this.Sequelize.Op.lt]: this.maxRetry,
